@@ -51,23 +51,106 @@ let particles = new ParticleSystem(fxCanvas);
 
 let lastTime = 0;
 let dropCounter = 0;
-let timerInterval = null;
-let gameStartTime = 0;
 
-// DAS (Delayed Auto Shift) Keyboard Input Handling
-const keysState = {};
-const DAS_DELAY = 150; // ms before repeat
+// ==========================================================================
+// DAS (Delayed Auto Shift) & ARR (Auto Repeat Rate) INPUT ENGINE
+// ==========================================================================
+
+const DAS_DELAY = 140; // ms before repeat starts
 const ARR_RATE = 35;   // ms per repeat step
+const SOFT_DROP_RATE = 35; // ms per soft drop step
 
-let leftTimer = null;
-let rightTimer = null;
-let downTimer = null;
+const activeKeys = new Set();
+
+let activeHorizontalDir = 0; // -1 for Left, 1 for Right, 0 for None
+let dasTimer = 0;
+let arrTimer = 0;
+let softDropTimer = 0;
+
+function handleKeyDown(code) {
+  if (game.isGameOver || game.isPaused || !game.startTime) return;
+
+  if (code === 'ArrowLeft' || code === 'KeyA') {
+    if (activeHorizontalDir !== -1) {
+      activeHorizontalDir = -1;
+      dasTimer = 0;
+      arrTimer = 0;
+      handleMove(-1);
+    }
+  } else if (code === 'ArrowRight' || code === 'KeyD') {
+    if (activeHorizontalDir !== 1) {
+      activeHorizontalDir = 1;
+      dasTimer = 0;
+      arrTimer = 0;
+      handleMove(1);
+    }
+  } else if (code === 'ArrowDown' || code === 'KeyS') {
+    if (!activeKeys.has('ArrowDown') && !activeKeys.has('KeyS')) {
+      softDropTimer = 0;
+      handleSoftDrop();
+    }
+  } else if (code === 'ArrowUp' || code === 'KeyW' || code === 'KeyX') {
+    handleRotate(1);
+  } else if (code === 'KeyZ') {
+    handleRotate(-1);
+  } else if (code === 'Space') {
+    handleHardDrop();
+  } else if (code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyC') {
+    handleHold();
+  }
+}
+
+function handleKeyUp(code) {
+  if ((code === 'ArrowLeft' || code === 'KeyA') && activeHorizontalDir === -1) {
+    if (activeKeys.has('ArrowRight') || activeKeys.has('KeyD')) {
+      activeHorizontalDir = 1;
+      dasTimer = 0;
+      arrTimer = 0;
+      handleMove(1);
+    } else {
+      activeHorizontalDir = 0;
+    }
+  } else if ((code === 'ArrowRight' || code === 'KeyD') && activeHorizontalDir === 1) {
+    if (activeKeys.has('ArrowLeft') || activeKeys.has('KeyA')) {
+      activeHorizontalDir = -1;
+      dasTimer = 0;
+      arrTimer = 0;
+      handleMove(-1);
+    } else {
+      activeHorizontalDir = 0;
+    }
+  }
+}
+
+function processContinuousInput(deltaTime) {
+  if (game.isGameOver || game.isPaused || !game.startTime) return;
+
+  // Horizontal Movement (DAS & ARR)
+  if (activeHorizontalDir !== 0) {
+    dasTimer += deltaTime;
+    if (dasTimer >= DAS_DELAY) {
+      arrTimer += deltaTime;
+      while (arrTimer >= ARR_RATE) {
+        handleMove(activeHorizontalDir);
+        arrTimer -= ARR_RATE;
+      }
+    }
+  }
+
+  // Soft Drop Holding
+  if (activeKeys.has('ArrowDown') || activeKeys.has('KeyS')) {
+    softDropTimer += deltaTime;
+    while (softDropTimer >= SOFT_DROP_RATE) {
+      handleSoftDrop();
+      softDropTimer -= SOFT_DROP_RATE;
+    }
+  }
+}
 
 // ==========================================================================
 // RENDERING FUNCTIONS
 // ==========================================================================
 
-// Draw Neon Background Grid
 function drawBackgroundGrid() {
   bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
   bgCtx.strokeStyle = 'rgba(0, 243, 255, 0.06)';
@@ -87,7 +170,6 @@ function drawBackgroundGrid() {
   }
 }
 
-// Draw a single styled block with bevel and glow
 function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
   const px = x * size;
   const py = y * size;
@@ -106,7 +188,6 @@ function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
   }
 
   ctx.save();
-  // Main Fill Gradient
   const grad = ctx.createLinearGradient(px, py, px + size, py + size);
   grad.addColorStop(0, color);
   grad.addColorStop(1, adjustColorBrightness(color, -40));
@@ -116,7 +197,6 @@ function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
   ctx.shadowBlur = 8;
   ctx.fillRect(px + 1, py + 1, size - 2, size - 2);
 
-  // Top/Left Bevel Highlight
   ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
   ctx.beginPath();
   ctx.moveTo(px + 1, py + 1);
@@ -128,7 +208,6 @@ function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
   ctx.closePath();
   ctx.fill();
 
-  // Dark Inner Border
   ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
   ctx.lineWidth = 1;
   ctx.strokeRect(px + 1, py + 1, size - 2, size - 2);
@@ -136,7 +215,6 @@ function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
   ctx.restore();
 }
 
-// Helper: Adjust color hex brightness
 function adjustColorBrightness(hex, percent) {
   let num = parseInt(hex.replace('#', ''), 16);
   let r = Math.max(0, Math.min(255, (num >> 16) + percent));
@@ -145,11 +223,9 @@ function adjustColorBrightness(hex, percent) {
   return '#' + (g | (b << 8) | (r << 16)).toString(16).padStart(6, '0');
 }
 
-// Render Main Board Canvas
 function renderBoard() {
   boardCtx.clearRect(0, 0, boardCanvas.width, boardCanvas.height);
 
-  // 1. Draw Settled Blocks
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (game.grid[r][c]) {
@@ -159,7 +235,6 @@ function renderBoard() {
   }
 
   if (game.currentPiece && !game.isGameOver) {
-    // 2. Draw Ghost Piece
     const ghostY = game.getGhostY();
     const shape = game.currentPiece.shape;
     for (let r = 0; r < shape.length; r++) {
@@ -170,7 +245,6 @@ function renderBoard() {
       }
     }
 
-    // 3. Draw Active Piece
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[r].length; c++) {
         if (shape[r][c]) {
@@ -181,9 +255,7 @@ function renderBoard() {
   }
 }
 
-// Render Preview Canvases (Hold & Next)
 function renderPreviews() {
-  // 1. Render Hold Canvas
   holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
   if (game.holdPiece) {
     const pDef = PIECES[game.holdPiece];
@@ -201,7 +273,6 @@ function renderPreviews() {
     });
   }
 
-  // 2. Render Next Queue Canvas
   nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
   const queueToDraw = game.nextQueue.slice(0, 3);
   const boxSize = 22;
@@ -222,7 +293,6 @@ function renderPreviews() {
   });
 }
 
-// Update UI Text Display
 function updateUI() {
   scoreDisplay.textContent = game.score.toLocaleString();
   highscoreDisplay.textContent = storage.getHighScore(game.mode).toLocaleString();
@@ -230,7 +300,6 @@ function updateUI() {
   linesDisplay.textContent = game.lines;
 }
 
-// Combo Toast Popup
 function showComboToast(text) {
   comboToast.textContent = text;
   comboToast.classList.add('show');
@@ -261,9 +330,11 @@ function gameLoop(time = 0) {
   lastTime = time;
 
   if (!game.isPaused && !game.isGameOver && game.startTime) {
+    processContinuousInput(deltaTime);
+
     dropCounter += deltaTime;
     if (dropCounter > game.getDropInterval()) {
-      handleSoftDrop();
+      handleGravityStep();
       dropCounter = 0;
     }
     updateTimer();
@@ -272,6 +343,7 @@ function gameLoop(time = 0) {
   renderBoard();
   renderPreviews();
   particles.updateAndDraw();
+  updateUI();
 
   requestAnimationFrame(gameLoop);
 }
@@ -292,12 +364,28 @@ function handleRotate(dir = 1) {
   }
 }
 
+function handleGravityStep() {
+  const result = game.gravityStep();
+  if (result.locked) {
+    if (result.clearedCount > 0) {
+      processClearedLines(result);
+    }
+    if (game.isGameOver) {
+      handleGameOver();
+    }
+  }
+}
+
 function handleSoftDrop() {
-  const clearedInfo = game.softDrop();
-  if (clearedInfo !== false) {
+  const result = game.softDrop();
+  if (result.moved) {
     audioSynth.playSoftDrop();
-    if (clearedInfo && clearedInfo.clearedCount > 0) {
-      processClearedLines(clearedInfo);
+  } else if (result.locked) {
+    if (result.clearedCount > 0) {
+      processClearedLines(result);
+    }
+    if (game.isGameOver) {
+      handleGameOver();
     }
   }
 }
@@ -309,16 +397,18 @@ function handleHardDrop() {
   const currentX = game.currentX;
   const pieceColor = game.currentPiece.color;
 
-  const distance = game.hardDrop();
-  if (distance > 0) {
+  const { distance, clearedInfo } = game.hardDrop();
+  if (distance > 0 || clearedInfo) {
     audioSynth.playHardDrop();
     triggerScreenShake('shake-target');
     particles.spawnDropEffect(currentX * BLOCK_SIZE, ghostY * BLOCK_SIZE + 20, BLOCK_SIZE * 3, pieceColor);
 
-    // Hard drop automatically locked piece, process lines
-    const clearedInfo = game.clearLines();
     if (clearedInfo && clearedInfo.clearedCount > 0) {
       processClearedLines(clearedInfo);
+    }
+
+    if (game.isGameOver) {
+      handleGameOver();
     }
   }
 }
@@ -345,10 +435,6 @@ function processClearedLines(info) {
   }
 
   updateUI();
-
-  if (game.isGameOver) {
-    handleGameOver();
-  }
 }
 
 function handleGameOver() {
@@ -383,6 +469,8 @@ function startGame() {
   game = new TetrisGame(selectedMode);
   particles.clear();
   dropCounter = 0;
+  activeHorizontalDir = 0;
+  activeKeys.clear();
   game.startTime = performance.now();
 
   startOverlay.classList.add('hidden');
@@ -409,10 +497,6 @@ function togglePause() {
 // ==========================================================================
 
 window.addEventListener('keydown', (e) => {
-  if (e.repeat && ['Space', 'KeyW', 'ArrowUp', 'KeyZ', 'KeyC', 'ShiftLeft'].includes(e.code)) {
-    return; // Prevent accidental spam repeats for drop/rotate/hold
-  }
-
   if (startOverlay.classList.contains('hidden') === false) {
     if (e.code === 'Enter') startGame();
     return;
@@ -423,43 +507,25 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  switch (e.code) {
-    case 'ArrowLeft':
-    case 'KeyA':
-      handleMove(-1);
-      break;
-    case 'ArrowRight':
-    case 'KeyD':
-      handleMove(1);
-      break;
-    case 'ArrowDown':
-    case 'KeyS':
-      handleSoftDrop();
-      break;
-    case 'ArrowUp':
-    case 'KeyW':
-    case 'KeyX':
-      handleRotate(1);
-      break;
-    case 'KeyZ':
-      handleRotate(-1);
-      break;
-    case 'Space':
-      handleHardDrop();
-      break;
-    case 'ShiftLeft':
-    case 'ShiftRight':
-    case 'KeyC':
-      handleHold();
-      break;
-    case 'KeyP':
-    case 'Escape':
-      togglePause();
-      break;
-    case 'KeyR':
-      startGame();
-      break;
+  if (e.code === 'KeyP' || e.code === 'Escape') {
+    togglePause();
+    return;
   }
+
+  if (e.code === 'KeyR') {
+    startGame();
+    return;
+  }
+
+  if (!activeKeys.has(e.code)) {
+    activeKeys.add(e.code);
+    handleKeyDown(e.code);
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  activeKeys.delete(e.code);
+  handleKeyUp(e.code);
 });
 
 // Touch & On-Screen Button Controls

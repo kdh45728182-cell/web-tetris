@@ -74,7 +74,6 @@ export const PIECES = {
 };
 
 // SRS (Super Rotation System) Wall-Kick Data
-// Rotations: 0 = spawn, 1 = 90deg CW, 2 = 180deg, 3 = 270deg CCW
 const KICK_DATA_JLSTZ = {
   '0-1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
   '1-0': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
@@ -99,12 +98,11 @@ const KICK_DATA_I = {
 
 export class TetrisGame {
   constructor(mode = 'marathon') {
-    this.mode = mode; // marathon, sprint, zen
+    this.mode = mode;
     this.reset();
   }
 
   reset() {
-    // 20 rows x 10 cols grid filled with null or color string
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
     
     this.score = 0;
@@ -129,7 +127,6 @@ export class TetrisGame {
     this.startTime = null;
     this.elapsedTimeMs = 0;
 
-    // Fill initial queue
     this.refillBagIfNeeded();
     for (let i = 0; i < 4; i++) {
       this.nextQueue.push(this.drawFromBag());
@@ -137,11 +134,9 @@ export class TetrisGame {
     this.spawnNextPiece();
   }
 
-  // 7-Bag Generator
   drawFromBag() {
     if (this.bag.length === 0) {
       this.bag = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
-      // Fisher-Yates shuffle
       for (let i = this.bag.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [this.bag[i], this.bag[j]] = [this.bag[j], this.bag[i]];
@@ -172,13 +167,11 @@ export class TetrisGame {
     this.currentY = 0;
     this.canHold = true;
 
-    // Check game over on spawn collision
     if (this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY)) {
       this.isGameOver = true;
     }
   }
 
-  // Rotate Matrix Clockwise
   rotateMatrix(matrix) {
     const N = matrix.length;
     const result = Array.from({ length: N }, () => Array(N).fill(0));
@@ -190,7 +183,6 @@ export class TetrisGame {
     return result;
   }
 
-  // Rotate Matrix Counter-Clockwise
   rotateMatrixCCW(matrix) {
     const N = matrix.length;
     const result = Array.from({ length: N }, () => Array(N).fill(0));
@@ -202,7 +194,6 @@ export class TetrisGame {
     return result;
   }
 
-  // Collision Check
   checkCollision(shape, offsetX, offsetY) {
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[r].length; c++) {
@@ -222,7 +213,6 @@ export class TetrisGame {
     return false;
   }
 
-  // Move Left / Right
   move(dir) {
     if (this.isGameOver || this.isPaused) return false;
     const newX = this.currentX + dir;
@@ -233,8 +223,7 @@ export class TetrisGame {
     return false;
   }
 
-  // Rotate Piece with SRS Wall-Kicks
-  rotate(dir = 1) { // 1 = CW, -1 = CCW
+  rotate(dir = 1) {
     if (this.isGameOver || this.isPaused) return false;
 
     const oldShape = this.currentPiece.shape;
@@ -247,7 +236,6 @@ export class TetrisGame {
 
     if (kicks) {
       for (let [dx, dy] of kicks) {
-        // SRS uses Cartesian coordinates, canvas Y is inverted
         const testX = this.currentX + dx;
         const testY = this.currentY - dy;
 
@@ -263,7 +251,6 @@ export class TetrisGame {
     return false;
   }
 
-  // Calculate Ghost Piece Y position
   getGhostY() {
     let ghostY = this.currentY;
     while (!this.checkCollision(this.currentPiece.shape, this.currentX, ghostY + 1)) {
@@ -272,33 +259,47 @@ export class TetrisGame {
     return ghostY;
   }
 
+  // Automatic Gravity Step
+  gravityStep() {
+    if (this.isGameOver || this.isPaused) return { moved: false, locked: false };
+
+    if (!this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY + 1)) {
+      this.currentY++;
+      return { moved: true, locked: false };
+    } else {
+      const clearedInfo = this.lockPiece();
+      return { moved: false, locked: true, ...clearedInfo };
+    }
+  }
+
   // Soft Drop
   softDrop() {
-    if (this.isGameOver || this.isPaused) return false;
+    if (this.isGameOver || this.isPaused) return { moved: false, locked: false };
+
     if (!this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY + 1)) {
       this.currentY++;
       this.score += 1;
-      return true;
+      return { moved: true, locked: false };
     } else {
-      this.lockPiece();
-      return false;
+      const clearedInfo = this.lockPiece();
+      return { moved: false, locked: true, ...clearedInfo };
     }
   }
 
   // Hard Drop
   hardDrop() {
-    if (this.isGameOver || this.isPaused) return 0;
+    if (this.isGameOver || this.isPaused) return { distance: 0, clearedInfo: null };
+
     const startY = this.currentY;
     const ghostY = this.getGhostY();
     const dropDistance = ghostY - startY;
 
     this.currentY = ghostY;
     this.score += dropDistance * 2;
-    this.lockPiece();
-    return dropDistance;
+    const clearedInfo = this.lockPiece();
+    return { distance: dropDistance, clearedInfo };
   }
 
-  // Hold Piece
   hold() {
     if (this.isGameOver || this.isPaused || !this.canHold) return false;
 
@@ -325,7 +326,6 @@ export class TetrisGame {
     return true;
   }
 
-  // Lock Piece into Grid and clear lines
   lockPiece() {
     const shape = this.currentPiece.shape;
     for (let r = 0; r < shape.length; r++) {
@@ -340,7 +340,6 @@ export class TetrisGame {
       }
     }
 
-    // Check & Clear full lines
     const clearedRowsInfo = this.clearLines();
     this.spawnNextPiece();
     return clearedRowsInfo;
@@ -366,7 +365,6 @@ export class TetrisGame {
       this.lines += cleared;
       this.combo++;
 
-      // Scoring
       const baseScores = [0, 100, 300, 500, 800];
       let scoreAdd = baseScores[cleared] * this.level;
 
@@ -380,17 +378,13 @@ export class TetrisGame {
         this.backToBack = false;
       }
 
-      // Combo Bonus
       if (this.combo > 0) {
         scoreAdd += 50 * this.combo * this.level;
       }
 
       this.score += scoreAdd;
-
-      // Level Progression (Every 10 lines)
       this.level = Math.floor(this.lines / 10) + 1;
 
-      // Check Sprint completion
       if (this.mode === 'sprint' && this.lines >= 40) {
         this.isGameOver = true;
       }
@@ -401,7 +395,6 @@ export class TetrisGame {
     return { clearedCount: cleared, clearedIndices, clearedColors };
   }
 
-  // Get Drop Speed in ms based on level
   getDropInterval() {
     if (this.mode === 'zen') return 600;
     return Math.max(50, 800 - (this.level - 1) * 65);
