@@ -1,5 +1,5 @@
 /* ==========================================================================
-   NEON TETRIS - CORE ENGINE (SRS, 7-BAG, SCORING, COLLISION)
+   NEON TETRIS - CORE ENGINE (SRS, 7-BAG, SCORING, LOCK DELAY, WALL KICKS)
    ========================================================================== */
 
 export const COLS = 10;
@@ -73,27 +73,27 @@ export const PIECES = {
   }
 };
 
-// SRS (Super Rotation System) Wall-Kick Data
+// Extended SRS Wall Kick Data (Includes overhang tucks & T-spins)
 const KICK_DATA_JLSTZ = {
-  '0-1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
-  '1-0': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
-  '1-2': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
-  '2-1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
-  '2-3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
-  '3-2': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
-  '3-0': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
-  '0-3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]]
+  '0-1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2], [1, 0], [0, -1]],
+  '1-0': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2], [-1, 0], [0, -1]],
+  '1-2': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2], [-1, 0], [0, -1]],
+  '2-1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2], [1, 0], [0, -1]],
+  '2-3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2], [-1, 0], [0, -1]],
+  '3-2': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2], [1, 0], [0, -1]],
+  '3-0': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2], [1, 0], [0, -1]],
+  '0-3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2], [-1, 0], [0, -1]]
 };
 
 const KICK_DATA_I = {
-  '0-1': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
-  '1-0': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
-  '1-2': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
-  '2-1': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
-  '2-3': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
-  '3-2': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
-  '3-0': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
-  '0-3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]]
+  '0-1': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2], [0, -1]],
+  '1-0': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2], [0, -1]],
+  '1-2': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1], [0, -1]],
+  '2-1': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1], [0, -1]],
+  '2-3': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2], [0, -1]],
+  '3-2': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2], [0, -1]],
+  '3-0': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1], [0, -1]],
+  '0-3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1], [0, -1]]
 };
 
 export class TetrisGame {
@@ -121,6 +121,12 @@ export class TetrisGame {
     this.currentX = 0;
     this.currentY = 0;
     this.currentRotation = 0;
+
+    // Lock Delay State (500ms grace period)
+    this.lockDelay = 500;
+    this.lockTimer = 0;
+    this.lockResets = 0;
+    this.maxLockResets = 15;
 
     this.isGameOver = false;
     this.isPaused = false;
@@ -166,6 +172,9 @@ export class TetrisGame {
     this.currentX = Math.floor((COLS - this.currentPiece.shape[0].length) / 2);
     this.currentY = 0;
     this.canHold = true;
+
+    this.lockTimer = 0;
+    this.lockResets = 0;
 
     if (this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY)) {
       this.isGameOver = true;
@@ -213,16 +222,32 @@ export class TetrisGame {
     return false;
   }
 
+  isGrounded() {
+    if (!this.currentPiece) return false;
+    return this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY + 1);
+  }
+
+  onPieceAction() {
+    if (this.isGrounded()) {
+      if (this.lockResets < this.maxLockResets) {
+        this.lockTimer = 0;
+        this.lockResets++;
+      }
+    }
+  }
+
   move(dir) {
     if (this.isGameOver || this.isPaused) return false;
     const newX = this.currentX + dir;
     if (!this.checkCollision(this.currentPiece.shape, newX, this.currentY)) {
       this.currentX = newX;
+      this.onPieceAction();
       return true;
     }
     return false;
   }
 
+  // Rotate Piece with SRS Wall-Kicks & Tucking
   rotate(dir = 1) {
     if (this.isGameOver || this.isPaused) return false;
 
@@ -244,6 +269,7 @@ export class TetrisGame {
           this.currentX = testX;
           this.currentY = testY;
           this.currentRotation = newRot;
+          this.onPieceAction();
           return true;
         }
       }
@@ -265,11 +291,10 @@ export class TetrisGame {
 
     if (!this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY + 1)) {
       this.currentY++;
+      this.lockTimer = 0;
       return { moved: true, locked: false };
-    } else {
-      const clearedInfo = this.lockPiece();
-      return { moved: false, locked: true, ...clearedInfo };
     }
+    return { moved: false, locked: false };
   }
 
   // Soft Drop
@@ -279,14 +304,13 @@ export class TetrisGame {
     if (!this.checkCollision(this.currentPiece.shape, this.currentX, this.currentY + 1)) {
       this.currentY++;
       this.score += 1;
+      this.lockTimer = 0;
       return { moved: true, locked: false };
-    } else {
-      const clearedInfo = this.lockPiece();
-      return { moved: false, locked: true, ...clearedInfo };
     }
+    return { moved: false, locked: false };
   }
 
-  // Hard Drop
+  // Hard Drop (Instant Lock)
   hardDrop() {
     if (this.isGameOver || this.isPaused) return { distance: 0, clearedInfo: null };
 
@@ -323,6 +347,8 @@ export class TetrisGame {
     }
 
     this.canHold = false;
+    this.lockTimer = 0;
+    this.lockResets = 0;
     return true;
   }
 

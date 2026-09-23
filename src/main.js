@@ -53,7 +53,7 @@ let lastTime = 0;
 let dropCounter = 0;
 
 // ==========================================================================
-// DAS (Delayed Auto Shift) & ARR (Auto Repeat Rate) INPUT ENGINE
+// DAS & ARR INPUT ENGINE
 // ==========================================================================
 
 const DAS_DELAY = 140; // ms before repeat starts
@@ -62,7 +62,7 @@ const SOFT_DROP_RATE = 35; // ms per soft drop step
 
 const activeKeys = new Set();
 
-let activeHorizontalDir = 0; // -1 for Left, 1 for Right, 0 for None
+let activeHorizontalDir = 0;
 let dasTimer = 0;
 let arrTimer = 0;
 let softDropTimer = 0;
@@ -125,7 +125,6 @@ function handleKeyUp(code) {
 function processContinuousInput(deltaTime) {
   if (game.isGameOver || game.isPaused || !game.startTime) return;
 
-  // Horizontal Movement (DAS & ARR)
   if (activeHorizontalDir !== 0) {
     dasTimer += deltaTime;
     if (dasTimer >= DAS_DELAY) {
@@ -137,7 +136,6 @@ function processContinuousInput(deltaTime) {
     }
   }
 
-  // Soft Drop Holding
   if (activeKeys.has('ArrowDown') || activeKeys.has('KeyS')) {
     softDropTimer += deltaTime;
     while (softDropTimer >= SOFT_DROP_RATE) {
@@ -170,7 +168,7 @@ function drawBackgroundGrid() {
   }
 }
 
-function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
+function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE, isLanding = false) {
   const px = x * size;
   const py = y * size;
 
@@ -193,24 +191,35 @@ function drawBlock(ctx, x, y, color, isGhost = false, size = BLOCK_SIZE) {
   grad.addColorStop(1, adjustColorBrightness(color, -40));
 
   ctx.fillStyle = grad;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8;
+  ctx.shadowColor = isLanding ? '#ffffff' : color;
+  ctx.shadowBlur = isLanding ? 16 : 8;
   ctx.fillRect(px + 1, py + 1, size - 2, size - 2);
 
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-  ctx.beginPath();
-  ctx.moveTo(px + 1, py + 1);
-  ctx.lineTo(px + size - 1, py + 1);
-  ctx.lineTo(px + size - 4, py + 4);
-  ctx.lineTo(px + 4, py + 4);
-  ctx.lineTo(px + 4, py + size - 4);
-  ctx.lineTo(px + 1, py + size - 1);
-  ctx.closePath();
-  ctx.fill();
+  // Lock Delay Flashing White Outline
+  if (isLanding) {
+    const pulseAlpha = (Math.sin(performance.now() / 60) + 1) / 2 * 0.7 + 0.3;
+    ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`;
+    ctx.fillRect(px + 1, py + 1, size - 2, size - 2);
 
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(px + 1, py + 1, size - 2, size - 2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, size - 2, size - 2);
+  } else {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.beginPath();
+    ctx.moveTo(px + 1, py + 1);
+    ctx.lineTo(px + size - 1, py + 1);
+    ctx.lineTo(px + size - 4, py + 4);
+    ctx.lineTo(px + 4, py + 4);
+    ctx.lineTo(px + 4, py + size - 4);
+    ctx.lineTo(px + 1, py + size - 1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 1, py + 1, size - 2, size - 2);
+  }
 
   ctx.restore();
 }
@@ -237,6 +246,9 @@ function renderBoard() {
   if (game.currentPiece && !game.isGameOver) {
     const ghostY = game.getGhostY();
     const shape = game.currentPiece.shape;
+    const isGrounded = game.isGrounded();
+
+    // Ghost Piece
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[r].length; c++) {
         if (shape[r][c]) {
@@ -245,10 +257,11 @@ function renderBoard() {
       }
     }
 
+    // Active Piece (Flashing if grounded in Lock Delay)
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[r].length; c++) {
         if (shape[r][c]) {
-          drawBlock(boardCtx, game.currentX + c, game.currentY + r, game.currentPiece.color);
+          drawBlock(boardCtx, game.currentX + c, game.currentY + r, game.currentPiece.color, false, BLOCK_SIZE, isGrounded);
         }
       }
     }
@@ -309,7 +322,7 @@ function showComboToast(text) {
 }
 
 // ==========================================================================
-// GAME LOOP & TIME UPDATER
+// GAME LOOP & LOCK DELAY TIMER
 // ==========================================================================
 
 function updateTimer() {
@@ -332,11 +345,26 @@ function gameLoop(time = 0) {
   if (!game.isPaused && !game.isGameOver && game.startTime) {
     processContinuousInput(deltaTime);
 
-    dropCounter += deltaTime;
-    if (dropCounter > game.getDropInterval()) {
-      handleGravityStep();
-      dropCounter = 0;
+    // Check Lock Delay when grounded
+    if (game.isGrounded()) {
+      game.lockTimer += deltaTime;
+      if (game.lockTimer >= game.lockDelay) {
+        const clearedInfo = game.lockPiece();
+        processClearedLines(clearedInfo);
+        game.lockTimer = 0;
+        if (game.isGameOver) {
+          handleGameOver();
+        }
+      }
+    } else {
+      // Natural Gravity Step when in mid-air
+      dropCounter += deltaTime;
+      if (dropCounter > game.getDropInterval()) {
+        game.gravityStep();
+        dropCounter = 0;
+      }
     }
+
     updateTimer();
   }
 
@@ -364,29 +392,10 @@ function handleRotate(dir = 1) {
   }
 }
 
-function handleGravityStep() {
-  const result = game.gravityStep();
-  if (result.locked) {
-    if (result.clearedCount > 0) {
-      processClearedLines(result);
-    }
-    if (game.isGameOver) {
-      handleGameOver();
-    }
-  }
-}
-
 function handleSoftDrop() {
   const result = game.softDrop();
   if (result.moved) {
     audioSynth.playSoftDrop();
-  } else if (result.locked) {
-    if (result.clearedCount > 0) {
-      processClearedLines(result);
-    }
-    if (game.isGameOver) {
-      handleGameOver();
-    }
   }
 }
 
@@ -420,6 +429,7 @@ function handleHold() {
 }
 
 function processClearedLines(info) {
+  if (!info || !info.clearedCount) return;
   const { clearedCount, clearedIndices, clearedColors } = info;
   audioSynth.playLineClear(clearedCount);
   triggerScreenShake('shake-target');
@@ -559,7 +569,7 @@ btnRestart.addEventListener('click', startGame);
 
 btnSound.addEventListener('click', () => {
   const muted = audioSynth.toggleMute();
-  btnSound.querySelector('.sound-icon').textContent = muted ? '🔇' : '🔊';
+  btnSound.querySelector('.sound-icon').textContent = muted ? '🔇' : '🔇';
 });
 
 // Modals Trigger
