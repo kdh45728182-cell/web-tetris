@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEON TETRIS - Cyberpunk Web Tetris</title>
+  <meta name="description" content="모던한 네온 사이버펑크 스타일의 웹 테트리스 게임! Web Audio API 사운드, SRS 회전, 파티클 이펙트, 모바일 터치 조작 지원.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Press+Start+2P&family=Share+Tech+Mono&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header Navigation -->
+    <header class="game-header">
+      <div class="logo">
+        <span class="logo-neon-pink">NEON</span>
+        <span class="logo-neon-cyan">TETRIS</span>
+      </div>
+      
+      <div class="header-controls">
+        <div class="mode-selector-wrapper">
+          <label for="mode-select" class="sr-only">게임 모드</label>
+          <select id="mode-select" class="cyber-select">
+            <option value="marathon">마라톤 (Classic)</option>
+            <option value="sprint">스프린트 (40 Lines)</option>
+            <option value="zen">젠 모드 (Infinite)</option>
+          </select>
+        </div>
+
+        <button id="btn-sound" class="icon-btn" title="사운드 토글 (M)" aria-label="사운드 토글">
+          <span class="sound-icon">🔊</span>
+        </button>
+        <button id="btn-stats" class="cyber-btn sm" title="통계 모달">📊 통계</button>
+        <button id="btn-controls" class="cyber-btn sm" title="조작법">🎮 조작법</button>
+      </div>
+    </header>
+
+    <!-- Main Game Layout -->
+    <main class="game-container">
+      <!-- Left Sidebar -->
+      <aside class="game-sidebar left-panel">
+        <!-- Hold Piece Box -->
+        <div class="glass-card panel-box">
+          <h2 class="panel-title">HOLD</h2>
+          <div class="canvas-box">
+            <canvas id="hold-canvas" width="120" height="120"></canvas>
+          </div>
+          <div class="hold-hint">Shift / C</div>
+        </div>
+
+        <!-- Score & Stats Box -->
+        <div class="glass-card panel-box stats-card">
+          <div class="stat-item">
+            <span class="stat-label">SCORE</span>
+            <span id="score-display" class="stat-value neon-gold">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">HIGH SCORE</span>
+            <span id="highscore-display" class="stat-value">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">LEVEL</span>
+            <span id="level-display" class="stat-value neon-cyan">1</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">LINES</span>
+            <span id="lines-display" class="stat-value neon-pink">0</span>
+          </div>
+          <div class="stat-item" id="timer-wrapper">
+            <span class="stat-label">TIME</span>
+            <span id="timer-display" class="stat-value">00:00.0</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center Board Wrapper -->
+      <section class="game-board-wrapper" id="board-container">
+        <!-- Screen Shake Canvas Container -->
+        <div class="canvas-layers" id="shake-target">
+          <!-- Grid / Ghost Layer -->
+          <canvas id="bg-canvas" width="300" height="600"></canvas>
+          <!-- Active Pieces & Settled Blocks Layer -->
+          <canvas id="board-canvas" width="300" height="600"></canvas>
+          <!-- Particle FX Overlay Layer -->
+          <canvas id="fx-canvas" width="300" height="600"></canvas>
+
+          <!-- Floating Combo / Message Overlay -->
+          <div id="combo-toast" class="combo-toast hidden"></div>
+        </div>
+
+        <!-- Overlay: Start Screen -->
+        <div id="start-overlay" class="game-overlay">
+          <div class="overlay-card">
+            <h1 class="glow-title">NEON TETRIS</h1>
+            <p class="overlay-subtitle">사이버펑크 아케이드 테트리스</p>
+            <button id="btn-start" class="cyber-btn primary lg">게임 시작 (Enter)</button>
+          </div>
+        </div>
+
+        <!-- Overlay: Pause Screen -->
+        <div id="pause-overlay" class="game-overlay hidden">
+          <div class="overlay-card">
+            <h2 class="glow-title yellow">PAUSED</h2>
+            <p class="overlay-subtitle">게임이 일시정지 되었습니다</p>
+            <div class="overlay-btn-group">
+              <button id="btn-resume" class="cyber-btn primary">계속하기 (P)</button>
+              <button id="btn-restart-pause" class="cyber-btn danger">재시작 (R)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Overlay: Game Over Screen -->
+        <div id="gameover-overlay" class="game-overlay hidden">
+          <div class="overlay-card">
+            <h2 class="glow-title pink">GAME OVER</h2>
+            <div class="gameover-stats">
+              <p>최종 점수: <span id="final-score" class="neon-gold">0</span></p>
+              <p>클리어 라인: <span id="final-lines" class="neon-pink">0</span></p>
+              <p>최고 레벨: <span id="final-level" class="neon-cyan">1</span></p>
+              <div id="new-record-badge" class="new-record-badge hidden">🏆 최고 기록 경신! 🏆</div>
+            </div>
+            <button id="btn-restart" class="cyber-btn primary lg">다시 도전 (Enter)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Sidebar -->
+      <aside class="game-sidebar right-panel">
+        <!-- Next Queue Box -->
+        <div class="glass-card panel-box">
+          <h2 class="panel-title">NEXT</h2>
+          <div class="canvas-box">
+            <canvas id="next-canvas" width="120" height="300"></canvas>
+          </div>
+        </div>
+
+        <!-- Controls Guide Box -->
+        <div class="glass-card panel-box controls-guide">
+          <h3 class="panel-subtitle">조작 안내</h3>
+          <ul class="key-list">
+            <li><kbd>←</kbd> <kbd>→</kbd> : 좌우 이동</li>
+            <li><kbd>↓</kbd> : 소프트 드롭</li>
+            <li><kbd>Space</kbd> : 하드 드롭</li>
+            <li><kbd>↑</kbd> / <kbd>X</kbd> : 시계방향 회전</li>
+            <li><kbd>Z</kbd> : 반시계방향 회전</li>
+            <li><kbd>Shift</kbd> / <kbd>C</kbd> : 홀드</li>
+            <li><kbd>P</kbd> or <kbd>Esc</kbd> : 일시정지</li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Mobile Virtual Touch Controls -->
+    <div class="mobile-controls-container">
+      <div class="dpad-group">
+        <button id="touch-left" class="touch-btn" aria-label="왼쪽 이동">◀</button>
+        <button id="touch-down" class="touch-btn" aria-label="소프트 드롭">▼</button>
+        <button id="touch-right" class="touch-btn" aria-label="오른쪽 이동">▶</button>
+      </div>
+      <div class="action-group">
+        <button id="touch-hold" class="touch-btn sm-touch" aria-label="홀드">HOLD</button>
+        <button id="touch-rotate-ccw" class="touch-btn" aria-label="반시계 회전">↺</button>
+        <button id="touch-rotate-cw" class="touch-btn accent-rotate" aria-label="시계 회전">↻</button>
+        <button id="touch-drop" class="touch-btn accent-drop" aria-label="하드 드롭">DROP</button>
+      </div>
+    </div>
+
+    <!-- Modal: Statistics -->
+    <div id="stats-modal" class="modal-backdrop hidden">
+      <div class="modal-card glass-card">
+        <div class="modal-header">
+          <h2>📊 플레이 통계</h2>
+          <button class="modal-close" data-close="stats-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="stats-grid">
+            <div class="stat-tile">
+              <div class="tile-val" id="stat-games">0</div>
+              <div class="tile-lbl">총 플레이 횟수</div>
+            </div>
+            <div class="stat-tile">
+              <div class="tile-val" id="stat-lines">0</div>
+              <div class="tile-lbl">총 클리어 라인</div>
+            </div>
+            <div class="stat-tile">
+              <div class="tile-val" id="stat-tetrises">0</div>
+              <div class="tile-lbl">테트리스 (4줄) 횟수</div>
+            </div>
+            <div class="stat-tile">
+              <div class="tile-val" id="stat-best-sprint">--:--</div>
+              <div class="tile-lbl">스프린트 최고 기록</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Controls Customizer -->
+    <div id="controls-modal" class="modal-backdrop hidden">
+      <div class="modal-card glass-card">
+        <div class="modal-header">
+          <h2>🎮 상세 조작 가이드</h2>
+          <button class="modal-close" data-close="controls-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-intro">테트리스 공식 규격 (SRS 시스템 적용) 안내:</p>
+          <div class="guide-grid">
+            <div class="guide-item">
+              <strong>Super Rotation System (SRS)</strong>
+              <p>벽에 붙어있거나 블록 사이에 끼어있을 때 회전 시 자동 위치 보정(Wall-kick)이 적용됩니다.</p>
+            </div>
+            <div class="guide-item">
+              <strong>7-Bag System</strong>
+              <p>7개의 서로 다른 블록이 한 세트로 무작위 섞여 등장하므로 특정 블록만 연속 등장하지 않습니다.</p>
+            </div>
+            <div class="guide-item">
+              <strong>Hold Piece</strong>
+              <p>현재 블록을 보관하거나 보관된 블록과 교체할 수 있습니다. (드롭당 1회)</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
